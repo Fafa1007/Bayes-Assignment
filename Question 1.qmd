@@ -1,0 +1,213 @@
+![](images/clipboard-752459117.png)
+
+------------------------------------------------------------------------
+
+# Question 1 b (Gibb Sampling)
+
+Using the results from above, write R code to generate posterior samples
+
+```{r}
+library(MASS)  # For mvrnorm (multivariate normal sampling)
+
+bayes_lm_gibbs <- function(y, X, M, a, b, beta_tilde,  n_samples = 10000, burn_in = 1000, thin = 2) {
+  # Check input dimensions
+  n <- length(y)
+  if (nrow(X) != n) stop("Number of rows in X must match length of y")
+  k_plus_1 <- ncol(X)
+  
+  # Precompute frequently used quantities
+  XtX <- t(X) %*% X
+  Xty <- t(X) %*% y
+  yty <- sum(y^2)
+  
+  # Initialize storage
+  total_iter <- burn_in + n_samples * thin
+  beta_samples <- matrix(NA, n_samples, k_plus_1)
+  sigma2_samples <- numeric(n_samples)
+  
+  # Initialize parameters
+  sigma2 <- var(y)  # Initial value for sigma^2
+  
+  # Gibbs sampling
+  sample_count <- 0
+  
+  for (iter in 1:total_iter) {
+    # 1. Sample beta given sigma^2
+    Sigma_beta <- solve(M + XtX) / as.numeric(sigma2)
+    beta_hat <- solve(XtX) %*% t(X) %*% y # OLS estimate
+    mu_beta <- solve(M+XtX) %*% (XtX %*% beta_hat + M %*% beta_tilde)
+    beta <- as.vector(mvtnorm::rmvnorm(1, mean = mu_beta, sigma = Sigma_beta))
+    
+    # 2. Sample sigma^2 given beta
+    A2 <- yty + t(beta_tilde) %*% M %*% beta_tilde - t(mu_beta) %*% (M + XtX) %*% mu_beta
+    shape <- a + n/2
+    rate <- b + A2/2
+    sigma2 <- 1 / rgamma(1, shape = shape, rate = rate)
+    
+    # Store samples after burn-in and with thinning
+    if (iter > burn_in && (iter - burn_in) %% thin == 0) {
+      sample_count <- sample_count + 1
+      beta_samples[sample_count, ] <- beta
+      sigma2_samples[sample_count] <- sigma2
+    }
+  }
+  
+  # Return results
+  list(beta_samples = beta_samples,
+       sigma2_samples = sigma2_samples,
+       acceptance_rate = 1)  # Gibbs always accepts
+}
+
+```
+
+```{r}
+#Packagesrequired
+ require(MASS)
+ require(cubature)
+
+ #Lets simulate some data
+ set.seed(2021)
+ 
+ n=150 #Numberofdatapoints
+ X.c=data.frame(matrix(rnorm(5*n),ncol=5))
+ colnames(X.c)= c("X1","X2","X3","X4", "X5")
+ X=as.matrix(cbind(1,X.c))          #Designmatrix
+ e=matrix(rnorm(n),ncol=1)          #Errors
+ beta.true=matrix(c(1,0,10,0,2,-3),ncol=1)
+ y=X%*%beta.true+e                  #Observations
+ k_plus_1 <- ncol(X)
+ 
+ results <- bayes_lm_gibbs(y,X, M = diag(1,k_plus_1), a = 1,b = 1,beta_tilde = diag(0,k_plus_1,1))
+```
+
+------------------------------------------------------------------------
+
+# Question 1 c i (Trace Plots)
+
+Create trace plots for each of the regression coefficients. Briefly discuss the results and what they mean.
+
+```{r}
+library(ggplot2)
+library(gridExtra)
+
+trace_plots <- list()
+
+for(i in 1:ncol(results[[1]])){
+  x <- seq(from = 1, to=length(results[[1]][,i]), by=100)
+  df <- data.frame(x=x, y=results[[1]][x,i])
+  trace_plots[[i]] <- ggplot()+
+    geom_line(data=df, aes(x=x, y=y), color="red") +
+    labs(
+      title = paste0("Trace Plot For Variable X", i-1), 
+      x = "Number of iterations post burn in", 
+      y = "Beta\nCoefficient\nValue"
+    )
+}
+
+combined1 <- do.call(grid.arrange, c(trace_plots, ncol = 2))
+combined1
+# ggsave(combined1, filename = "Figures/Trace Plots.png")
+```
+
+------------------------------------------------------------------------
+
+# Question c ii (Density Plots)
+
+Create density plots for each of the regression coefficients.
+
+```{r}
+#| Warning = FALSE
+
+library(ggplot2)
+library(gridExtra)
+
+trace_plots <- list()
+
+for(i in 1:ncol(results[[1]])){
+  df <- data.frame(x=results[[1]][,i])
+  trace_plots[[i]] <- ggplot()+
+    geom_histogram(data=df, aes(x=x, y=..density..), color="black", ) +
+    labs(
+      title = paste0("Density Plot For Variable X", i-1), 
+      x = "Beta Coefficient Values", 
+      y = "Density"
+    )
+}
+
+do.call(grid.arrange, c(trace_plots, ncol = 2))
+
+```
+
+------------------------------------------------------------------------
+
+# Question c ii i.
+
+i.  Show where the sample average and true coefficients lie on the density plots. Briefly discuss the results.
+
+```{r}
+library(ggplot2)
+library(gridExtra)
+
+trace_plots <- list()
+
+fit <- lm(y~X)
+summary(fit)
+true_coef <- fit$coefficients[-2]
+
+for(i in 1:ncol(results[[1]])){
+  df <- data.frame(x=results[[1]][,i])
+  trace_plots[[i]] <- ggplot()+
+    geom_histogram(data=df, aes(x=x, y=..density..), color="black", ) +
+    geom_vline(xintercept = mean(df$x), color = "Red") +
+    geom_vline(xintercept = true_coef[i], color = "Green") +
+    labs(
+      title = paste0("Density Plot For Variable X", i-1), 
+      x = "Beta Coefficient Values", 
+      y = "Density"
+    )
+}
+
+combined2 <- do.call(grid.arrange, c(trace_plots, ncol = 2))
+combined2
+combined2
+# ggsave(combined2, filename = "Figures/Density Plot Mean and True Coef.png")
+```
+
+------------------------------------------------------------------------
+
+# Question c ii ii.
+
+ii\. Show where the cutoffs are for the 95% credibility interval on the density plots. Briefly discuss the difference between credibility intervals and confidence intervals. Discuss the computed credibility intervals.
+
+```{r}
+#| Warning = FALSE
+
+library(ggplot2)
+library(gridExtra)
+
+trace_plots <- list()
+
+fit <- lm(y~X)
+summary(fit)
+true_coef <- fit$coefficients[-2]
+
+for(i in 1:ncol(results[[1]])){
+  df <- data.frame(x=results[[1]][,i])
+  cred_int <- quantile(df$x, probs = c(0.025, 0.975))
+  trace_plots[[i]] <- ggplot()+
+    geom_histogram(data=df, aes(x=x, y=..density..), color="black") +
+    geom_vline(xintercept = mean(df$x), color = "red") +
+    geom_vline(xintercept = true_coef[i], color = "green") +
+    geom_vline(xintercept = cred_int[1], color = "orange", linetype = "dashed")+
+    geom_vline(xintercept = cred_int[2], color = "orange", linetype = "dashed") +
+    labs(
+      title = paste0("Density Plot For Variable X", i-1), 
+      x = "Beta Coefficient Values", 
+      y = "Density"
+    )
+}
+
+combined3 <- do.call(grid.arrange, c(trace_plots, ncol = 2))
+combined3
+# ggsave(combined3, filename = "Figures/Density Plot Credibility Interval.png")
+```
