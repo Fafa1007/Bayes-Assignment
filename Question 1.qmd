@@ -1,4 +1,4 @@
-![](images/clipboard-752459117.png)
+![](images/clipboard-4252296991.png)
 
 ------------------------------------------------------------------------
 
@@ -78,6 +78,8 @@ bayes_lm_gibbs <- function(y, X, M, a, b, beta_tilde,  n_samples = 10000, burn_i
  k_plus_1 <- ncol(X)
  
  results <- bayes_lm_gibbs(y,X, M = diag(1,k_plus_1), a = 1,b = 1,beta_tilde = diag(0,k_plus_1,1))
+ 
+ results
 ```
 
 ------------------------------------------------------------------------
@@ -104,7 +106,7 @@ for(i in 1:ncol(results[[1]])){
     )
 }
 
-combined1 <- do.call(grid.arrange, c(trace_plots, ncol = 2))
+do.call(grid.arrange, c(trace_plots, ncol = 2))
 combined1
 # ggsave(combined1, filename = "Figures/Trace Plots.png")
 ```
