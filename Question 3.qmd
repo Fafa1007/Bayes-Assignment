@@ -197,4 +197,5 @@ Y = rbind(Y1,Y2)
 
 results <- lm_gibbs_sampling_two(Y, X, a=1, b=1,T0 = diag(1,ncol(X)),tau1 = 1/(sd1^2), tau2 = 1/(sd2^2), n1 = n1 )
 head(results)
+save(results, file = "R Data/Question 2 Gibb Samples.RData")
 ```
