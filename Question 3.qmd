@@ -105,3 +105,96 @@ colMeans(results$beta_samples)  # Posterior means of beta
 mean(results$tau1_samples)     # Posterior mean of tau1
 mean(results$tau2_samples)     # Posterior mean of tau2
 ```
+
+```{r}
+# Gibbs Sampling 
+# Y = (n x 1) response vector (partitioned for Y1 and Y2 samples)
+# X = (n x k+1) predictors matrix (partitioned for X1 and X2 samples)
+# Beta = (k+1 x 1) beta coeficients vector 
+# e = (n x 1) error vector (partitioned for e1 and e2 samples)
+# tau1 <- sample 1 precision scalar (remember tau1 > tau2)
+# tau2 <- sample 2 precision scalar (remember tau1 > tau2)
+# T0 <- (k+1 x k+1) prior beta sigma^2 matrix
+# a = sigma^2 prior shape parameter scalar
+# b = sigma^2 prior rate parameter scalar
+
+lm_gibbs_sampling_two <- function(Y, X, a, b, T0, tau1, tau2, n1,
+                    n_samples = 60000, burn_in = 5000, thin = 2) {
+  # Initial Set Up
+  n <- length(Y)
+  k_plus_1 <- ncol(X)
+  index <- 0
+  X1 <- X[1:n1, ]
+  X2 <- X[(n1 + 1):n, ]
+  Y1 <- Y[1:n1]
+  Y2 <- Y[(n1 + 1):n]
+  
+  # Initialize storage
+  total_iter <- burn_in + n_samples * thin
+  beta_samples <- matrix(NA, n_samples, k_plus_1)
+  tau1_samples <- numeric(n_samples)
+  tau2_samples <- numeric(n_samples)
+    
+  # Gibbs Sampling
+  for (iter in 1:total_iter) {
+    # 1. Sample beta given Y, X, tau1, tau2
+    beta_mu <- solve(tau1*t(X1)%*%X1 + tau2*t(X2)%*%X2 + solve(T0)) %*% (tau1*t(X1)%*%Y1 + tau2*t(X2)%*%Y2) 
+    beta_sigma_squared <- tau1*t(X1)%*%X1 + tau2*t(X2)%*%X2 + solve(T0)
+    beta <- as.vector(mvtnorm::rmvnorm(1, mean = beta_mu, sigma = beta_sigma_squared))
+    
+    # 2. Sample tau1 given beta, tau2, X, Y
+    tau1_rate <- (t(Y1-X1%*%beta) %*% (Y1-X1%*%beta))/2 + b
+    tau1_shape <- (n1/2) + a
+    tau1 <- rgamma(1, shape = tau1_shape, rate = tau1_rate)
+    
+    # 2. Sample tau1 given beta, tau2, X, Y
+    tau2_rate <- (t(Y2-X2%*%beta) %*% (Y2-X2%*%beta))/2 + b
+    tau2_shape <- ((n-n1)/2) + a
+    # indicator <- ifelse(tau1>tau2, 1, 0)
+    # We would multiply the following tau 2 with the indicator function, but since when we split the data knowing that Y1 and Y2 were drawn from samples with Y2 having a large variance.
+    tau2 <- rgamma(1, shape = tau2_shape, rate = tau2_rate)
+    
+    # Store samples after burn-in and with thinning
+    if (iter > burn_in && (iter - burn_in) %% thin == 0) {
+      index <- index + 1
+      beta_samples[index, ] <- beta
+      tau1_samples[index] <- tau1
+      tau2_samples[index] <- tau2
+    }
+  }
+  
+  # Return results
+  return(list(beta_samples = beta_samples,
+         tau1_samples = tau1_samples, 
+         tau2_samples = tau2_samples))
+}
+```
+
+```{r}
+#Packagesrequired
+require(MASS)
+require(cubature)
+
+#Lets simulate some data
+set.seed(2025)
+n=150 # Number of data points
+n1 = n/2
+sd1 = 1.2
+sd2 = 1.5
+
+X1.c=data.frame(matrix(rnorm(n = 5 * n1),ncol=5))
+X2.c=data.frame(matrix(rnorm(n = 5* (n-n1)),ncol=5))
+X.c=rbind(X1.c, X2.c)
+colnames(X.c)= c("X1","X2","X3","X4", "X5")
+X=as.matrix(cbind(1,X.c)) #Designmatrix
+
+e1=matrix(rnorm(n = n1 , sd = sd1^2),ncol=1) #Errors
+e2=matrix(rnorm(n= n-n1, sd = sd2^2),ncol=1) #Errors
+beta.true=matrix(c(1,0,10,0,2,-3),ncol=1)
+Y1 = as.matrix(cbind(1,X1.c))%*%beta.true+e1
+Y2 = as.matrix(cbind(1,X2.c))%*%beta.true+e2
+Y = rbind(Y1,Y2)
+
+results <- lm_gibbs_sampling_two(Y, X, a=1, b=1,T0 = diag(1,ncol(X)),tau1 = 1/(sd1^2), tau2 = 1/(sd2^2), n1 = n1 )
+head(results)
+```

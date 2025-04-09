@@ -1,102 +1,96 @@
-![](images/clipboard-4252296991.png)
-
-------------------------------------------------------------------------
-
-# Question 1 b (Gibb Sampling)
-
-Using the results from above, write R code to generate posterior samples
+# Question 1 (Gibb's Sampling)
 
 ```{r}
-library(MASS)  # For mvrnorm (multivariate normal sampling)
+# Gibbs Sampling 
+# Y = (n x 1) response vector
+# X = (n x k+1) predictors matrix
+# Beta = (k+1 x 1) beta coeficients vector 
+# Beta_tau = (k+1 x 1) beta prior mean vector
+# e = (n x 1) error vector
+# sigma_squared <- beta prior varaince scalar
+# M = (k+1 x k+1) identity matrix
+# a = sigma^2 prior shape parameter scalar
+# b = sigma^2 prior rate parameter scalar
 
-bayes_lm_gibbs <- function(y, X, M, a, b, beta_tilde,  n_samples = 10000, burn_in = 1000, thin = 2) {
-  # Check input dimensions
-  n <- length(y)
-  if (nrow(X) != n) stop("Number of rows in X must match length of y")
+lm_gibbs_sampling <- function(Y, X, 
+                              a = 1, b = 1, 
+                              n_samples = 60000, burn_in = 5000, thin = 2) {
+  # Initial Set Up
+  set.seed(2025)
+  n <- length(Y)
   k_plus_1 <- ncol(X)
-  
-  # Precompute frequently used quantities
-  XtX <- t(X) %*% X
-  Xty <- t(X) %*% y
-  yty <- sum(y^2)
+  sigma2 <- 1
+  M <- diag(1, k_plus_1)
+  beta_tilde = diag(0, nrow = k_plus_1, ncol= 1) 
+  index <- 0
   
   # Initialize storage
   total_iter <- burn_in + n_samples * thin
   beta_samples <- matrix(NA, n_samples, k_plus_1)
   sigma2_samples <- numeric(n_samples)
   
-  # Initialize parameters
-  sigma2 <- var(y)  # Initial value for sigma^2
+  # Precalcualtions
+  beta_hat <- solve(t(X) %*% X) %*% t(X) %*% Y   # OLS estimate
+  beta_mu <- solve(M + t(X) %*% X) %*% ((t(X) %*% X) %*% beta_hat + M %*% beta_tilde)
+  A2 <- t(Y) %*% Y + t(beta_tilde) %*% M %*% beta_tilde - t(beta_mu) %*% (M + t(X) %*% X) %*% beta_mu
+  sigma2_shape <- a + (n/2)
+  sigma2_rate <- b + (A2/2)
   
-  # Gibbs sampling
-  sample_count <- 0
-  
+  # Gibbs Sampling
   for (iter in 1:total_iter) {
     # 1. Sample beta given sigma^2
-    Sigma_beta <- solve(M + XtX) / as.numeric(sigma2)
-    beta_hat <- solve(XtX) %*% t(X) %*% y # OLS estimate
-    mu_beta <- solve(M+XtX) %*% (XtX %*% beta_hat + M %*% beta_tilde)
-    beta <- as.vector(mvtnorm::rmvnorm(1, mean = mu_beta, sigma = Sigma_beta))
+    beta_sigma_squared <- sigma2 * solve(M + t(X) %*% X)
+    beta <- as.vector(mvtnorm::rmvnorm(1, mean = beta_mu, sigma = beta_sigma_squared))
     
     # 2. Sample sigma^2 given beta
-    A2 <- yty + t(beta_tilde) %*% M %*% beta_tilde - t(mu_beta) %*% (M + XtX) %*% mu_beta
-    shape <- a + n/2
-    rate <- b + A2/2
-    sigma2 <- 1 / rgamma(1, shape = shape, rate = rate)
+    sigma2 <- 1 / rgamma(1, shape = sigma2_shape, rate = sigma2_rate)
     
     # Store samples after burn-in and with thinning
     if (iter > burn_in && (iter - burn_in) %% thin == 0) {
-      sample_count <- sample_count + 1
-      beta_samples[sample_count, ] <- beta
-      sigma2_samples[sample_count] <- sigma2
+      index <- index + 1
+      beta_samples[index, ] <- beta
+      sigma2_samples[index] <- sigma2
     }
   }
   
   # Return results
-  list(beta_samples = beta_samples,
-       sigma2_samples = sigma2_samples,
-       acceptance_rate = 1)  # Gibbs always accepts
+  return(list(beta_samples = beta_samples,
+         sigma2_samples = sigma2_samples))
 }
-
-```
-
-```{r}
-# Gibbs Sampling Method 2
 ```
 
 ```{r}
 #Packagesrequired
- require(MASS)
- require(cubature)
+require(MASS)
+require(cubature)
 
- #Lets simulate some data
- set.seed(2021)
- 
- n=150 #Numberofdatapoints
- X.c=data.frame(matrix(rnorm(5*n),ncol=5))
- colnames(X.c)= c("X1","X2","X3","X4", "X5")
- X=as.matrix(cbind(1,X.c))          #Designmatrix
- e=matrix(rnorm(n),ncol=1)          #Errors
- beta.true=matrix(c(1,0,10,0,2,-3),ncol=1)
- y=X%*%beta.true+e                  #Observations
- k_plus_1 <- ncol(X)
- 
- results <- bayes_lm_gibbs(y,X, M = diag(1,k_plus_1), a = 1,b = 1,beta_tilde = diag(0,k_plus_1,1))
- 
- results
+#Lets simulate some data
+set.seed(2025)
+n=150 # Number of data points
+
+X.c=data.frame(matrix(rnorm(5*n),ncol=5))
+colnames(X.c)= c("X1","X2","X3","X4", "X5")
+X=as.matrix(cbind(1,X.c)) #Designmatrix
+
+e=matrix(rnorm(n),ncol=1) #Errors
+beta.true=matrix(c(1,0,10,0,2,-3),ncol=1)
+Y=X%*%beta.true+e #Observations
+
+results <- lm_gibbs_sampling(Y, X)
+head(results)
+# save(results, file = "R Data/Question 1 Gibb Samples.RData")
 ```
 
 ------------------------------------------------------------------------
 
-# Question 1 c i (Trace Plots)
-
-Create trace plots for each of the regression coefficients. Briefly discuss the results and what they mean.
+# Question 1 (Trace Plots)
 
 ```{r}
 library(ggplot2)
 library(gridExtra)
 
 trace_plots <- list()
+names <- c("Intercept", "Variable X1", "Variable X2", "Variable X3", "Variable X4", "Variable X5")
 
 for(i in 1:ncol(results[[1]])){
   x <- seq(from = 1, to=length(results[[1]][,i]), by=100)
@@ -104,22 +98,19 @@ for(i in 1:ncol(results[[1]])){
   trace_plots[[i]] <- ggplot()+
     geom_line(data=df, aes(x=x, y=y), color="red") +
     labs(
-      title = paste0("Trace Plot For Variable X", i-1), 
+      title = paste0("Trace Plot For", names[i]), 
       x = "Number of iterations post burn in", 
       y = "Beta\nCoefficient\nValue"
-    )
+    ) + theme_minimal()
 }
 
-do.call(grid.arrange, c(trace_plots, ncol = 2))
-combined1
-# ggsave(combined1, filename = "Figures/Trace Plots.png")
+combined_plot <- do.call(grid.arrange, c(trace_plots, ncol = 2))
+# ggsave(filename = "Figures/Question 1 Trace Plots.png",plot = combined_plot)
 ```
 
 ------------------------------------------------------------------------
 
-# Question c ii (Density Plots)
-
-Create density plots for each of the regression coefficients.
+# Question 1 (Density Plots)
 
 ```{r}
 #| Warning = FALSE
@@ -128,92 +119,72 @@ library(ggplot2)
 library(gridExtra)
 
 trace_plots <- list()
-
-for(i in 1:ncol(results[[1]])){
-  df <- data.frame(x=results[[1]][,i])
-  trace_plots[[i]] <- ggplot()+
-    geom_histogram(data=df, aes(x=x, y=..density..), color="black", ) +
-    labs(
-      title = paste0("Density Plot For Variable X", i-1), 
-      x = "Beta Coefficient Values", 
-      y = "Density"
-    )
-}
-
-do.call(grid.arrange, c(trace_plots, ncol = 2))
-
-```
-
-------------------------------------------------------------------------
-
-# Question c ii i.
-
-i.  Show where the sample average and true coefficients lie on the density plots. Briefly discuss the results.
-
-```{r}
-library(ggplot2)
-library(gridExtra)
-
-trace_plots <- list()
-
-fit <- lm(y~X)
-summary(fit)
-true_coef <- fit$coefficients[-2]
-
-for(i in 1:ncol(results[[1]])){
-  df <- data.frame(x=results[[1]][,i])
-  trace_plots[[i]] <- ggplot()+
-    geom_histogram(data=df, aes(x=x, y=..density..), color="black", ) +
-    geom_vline(xintercept = mean(df$x), color = "Red") +
-    geom_vline(xintercept = true_coef[i], color = "Green") +
-    labs(
-      title = paste0("Density Plot For Variable X", i-1), 
-      x = "Beta Coefficient Values", 
-      y = "Density"
-    )
-}
-
-combined2 <- do.call(grid.arrange, c(trace_plots, ncol = 2))
-combined2
-combined2
-# ggsave(combined2, filename = "Figures/Density Plot Mean and True Coef.png")
-```
-
-------------------------------------------------------------------------
-
-# Question c ii ii.
-
-ii\. Show where the cutoffs are for the 95% credibility interval on the density plots. Briefly discuss the difference between credibility intervals and confidence intervals. Discuss the computed credibility intervals.
-
-```{r}
-#| Warning = FALSE
-
-library(ggplot2)
-library(gridExtra)
-
-trace_plots <- list()
-
-fit <- lm(y~X)
-summary(fit)
-true_coef <- fit$coefficients[-2]
+names <- c("Intercept", "Variable X1", "Variable X2", "Variable X3", "Variable X4", "Variable X5")
 
 for(i in 1:ncol(results[[1]])){
   df <- data.frame(x=results[[1]][,i])
   cred_int <- quantile(df$x, probs = c(0.025, 0.975))
+  
   trace_plots[[i]] <- ggplot()+
     geom_histogram(data=df, aes(x=x, y=..density..), color="black") +
     geom_vline(xintercept = mean(df$x), color = "red") +
-    geom_vline(xintercept = true_coef[i], color = "green") +
-    geom_vline(xintercept = cred_int[1], color = "orange", linetype = "dashed")+
+    geom_vline(xintercept = beta.true[i], color = "green") +
+    geom_vline(xintercept = cred_int[1], color = "orange", linetype = "dashed") +
     geom_vline(xintercept = cred_int[2], color = "orange", linetype = "dashed") +
+    geom_text(aes(x = 0, y = 0.5, label = paste0("Mean=", round(mean(df$x), 1))), color = "red", size = 2) +
+    geom_text(aes(x = 0, y = 0.3, label = paste0("True Beta=", round(beta.true[i], 1))),color = "green", size = 2) +
     labs(
-      title = paste0("Density Plot For Variable X", i-1), 
+      title = paste0("Density Plot For ", names[i]), 
       x = "Beta Coefficient Values", 
       y = "Density"
+    ) + theme_minimal() +
+    theme(
+      plot.title = element_text(size = 10),
+      axis.title = element_text(size = 8),
+      axis.text = element_text(size = 7)
     )
 }
 
-combined3 <- do.call(grid.arrange, c(trace_plots, ncol = 2))
-combined3
-# ggsave(combined3, filename = "Figures/Density Plot Credibility Interval.png")
+combined <- do.call(grid.arrange, c(trace_plots, ncol = 2))
+# ggsave(combined, filename = "Figures/Question 1 Final Density Plot.png")
+```
+
+```{r}
+for(i in 1:ncol(results[[1]])){
+  df <- data.frame(x = results[[1]][,i])
+  cred_int <- quantile(df$x, probs = c(0.025, 0.975))
+  mean_val <- mean(df$x)
+  true_val <- beta.true[i]
+  
+  trace_plots[[i]] <- ggplot(df, aes(x = x)) +
+    geom_histogram(aes(y = ..density..), color = "black", fill = "gray80") +
+    geom_vline(aes(xintercept = mean_val), color = "red") +
+    geom_vline(aes(xintercept = true_val), color = "green") +
+    geom_vline(aes(xintercept = cred_int[1]), color = "orange", linetype = "dashed") +
+    geom_vline(aes(xintercept = cred_int[2]), color = "orange", linetype = "dashed") +
+    
+    # Annotations for the values
+    annotate("text", x = mean_val, y = Inf, label = sprintf("Mean = %.2f", mean_val), 
+             vjust = -0.5, hjust = 0.5, size = 2.5, color = "red") +
+    annotate("text", x = true_val, y = Inf, label = sprintf("True = %.2f", true_val), 
+             vjust = -1.5, hjust = 0.5, size = 2.5, color = "green") +
+    annotate("text", x = cred_int[1], y = Inf, label = sprintf("CI low = %.2f", cred_int[1]), 
+             vjust = -2.5, hjust = 0.5, size = 2.5, color = "orange") +
+    annotate("text", x = cred_int[2], y = Inf, label = sprintf("CI high = %.2f", cred_int[2]), 
+             vjust = -3.5, hjust = 0.5, size = 2.5, color = "orange") +
+    
+    labs(
+      title = paste0("Density Plot For ", names[i]), 
+      x = "Beta Coefficient Values", 
+      y = "Density"
+    ) + 
+    theme_minimal() +
+    theme(
+      plot.title = element_text(size = 10),
+      axis.title = element_text(size = 8),
+      axis.text = element_text(size = 7)
+    )
+}
+
+combined <- do.call(grid.arrange, c(trace_plots, ncol = 2))
 ```
