@@ -61,6 +61,10 @@ bayes_lm_gibbs <- function(y, X, M, a, b, beta_tilde,  n_samples = 10000, burn_i
 ```
 
 ```{r}
+# Gibbs Sampling Method 2
+```
+
+```{r}
 #Packagesrequired
  require(MASS)
  require(cubature)

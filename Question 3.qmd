@@ -2,113 +2,106 @@
 
 ```{r}
 # Gibbs Sampler for Bayesian Linear Regression with Outliers
-# Model: Y_i = x_i^T beta + e_i, where e_i ~ N(0, sigma1^2) for i in I1, N(0, sigma2^2) for i in I2
+library(MASS)       # For multivariate normal sampling
+library(truncnorm)  # For truncated normal (used for truncated Gamma via inverse transform)
+library(mvtnorm)
 
-library(MASS)  # For multivariate normal sampling
-
-# Generate synthetic data
-set.seed(123)
-n <- 100  # Total observations
-n1 <- 80   # Number of "good" observations (I1)
-p <- 3     # Number of predictors
-
-# True parameters
-true_beta <- c(1.5, -2, 0.5)
-true_tau1 <- 1/0.5^2   # Precision for I1 (sigma1 = 0.5)
-true_tau2 <- 1/2^2     # Precision for I2 (sigma2 = 2)
-
-# Design matrix (random normal predictors)
-X <- matrix(rnorm(n*p), n, p)
-X[,1] <- 1  # First column is intercept
-
-# Generate responses
-I1 <- 1:n1
-I2 <- (n1+1):n
-Y <- numeric(n)
-Y[I1] <- X[I1,] %*% true_beta + rnorm(n1, 0, sqrt(1/true_tau1))
-Y[I2] <- X[I2,] %*% true_beta + rnorm(n-n1, 0, sqrt(1/true_tau2))
-
-# Priors
-T0_inv <- diag(0.01, p)  # Weakly informative prior precision for beta
-a <- 0.1; b <- 0.1        # Gamma prior parameters for tau1, tau2
-
-# Gibbs sampling setup
-n_iter <- 10000
-burnin <- 2000
-thin <- 5
-
-# Initialize storage
-beta_samples <- matrix(NA, n_iter, p)
-tau1_samples <- numeric(n_iter)
-tau2_samples <- numeric(n_iter)
-
-# Initial values
-beta <- solve(t(X) %*% X) %*% t(X) %*% Y  # OLS estimate
-tau1 <- 1/var(Y[I1])
-tau2 <- 1/var(Y[I2])
-
-# Gibbs sampler
-for (iter in 1:n_iter) {
-    # 1. Sample beta from its conditional posterior
-    X1 <- X[I1,]
-    X2 <- X[I2,]
-    Y1 <- Y[I1]
-    Y2 <- Y[I2]
-    
-    Sigma_beta_inv <- tau1 * t(X1) %*% X1 + tau2 * t(X2) %*% X2 + T0_inv
+bayes_lm_gibbs_trunc <- function(
+    X, Y, n1, n2,
+    prior_beta_mean = NULL, 
+    prior_beta_variance, #T0 
+    a = 1, b = 1,
+    n_iter = 5000, burn_in = 1000,
+    thin = 2
+) {
+  # Dimensions
+  n <- nrow(X)
+  p <- ncol(X)
+  
+  # Default prior for beta: N(0, 100I)
+  if (is.null(prior_beta_mean)) prior_beta_mean <- rep(0, p)
+  prior_beta_cov <- diag(p) * prior_beta_variance
+  
+  # Initialize storage
+  total_iter <- burn_in + (n1 + n2) * thin
+  beta_samples <- matrix(0, n_iter, p)
+  tau1_samples <- numeric(n_iter)
+  tau2_samples <- numeric(n_iter)
+  
+  # Initial values
+  beta <- rep(0, p)
+  tau1 <- as.numeric(var(Y))
+  tau2 <- tau1 * 2 # Since assumption is that tau1 < tau2
+  sample_count <- 0
+  
+  # Split data into standard (I1) and outlier (I2) groups
+  X1 <- X[1:n1, , drop = FALSE]
+  X2 <- X[(n1 + 1):(n1 + n2), , drop = FALSE]
+  Y1 <- Y[1:n1]
+  Y2 <- Y[(n1 + 1):(n1 + n2)]
+  
+  # Gibbs sampling loop
+  for (iter in 1:total_iter) {
+    # --- Sample beta ---
+    Sigma_beta_inv <- tau1 * t(X1) %*% X1 + tau2 * t(X2) %*% X2 + solve(prior_beta_cov)
     Sigma_beta <- solve(Sigma_beta_inv)
-    mu_beta <- Sigma_beta %*% (tau1 * t(X1) %*% Y1 + tau2 * t(X2) %*% Y2)
+    mu_beta <- Sigma_beta %*% (tau1 * t(X1) %*% X1 + tau2 * t(X2) %*% X2)
+    beta <- mvtnorm::rmvnorm(1, mean = mu_beta[1,],sigma =  Sigma_beta)
+    # Error with mu beta not being one vector
     
-    beta <- mvrnorm(1, mu_beta, Sigma_beta)
+    # --- Sample tau1 ---
+    residuals1 <- Y1 - X1 %*% t(beta) # not t(beta) and not x1 
+    shape_tau1 <- a + n1 / 2
+    rate_tau1 <- b + sum(residuals1^2) / 2
+    tau1 <- rgamma(1, shape = shape_tau1, rate = rate_tau1)
     
-    # 2. Sample tau1 from its conditional posterior
-    a_tau1 <- a + n1/2
-    resid1 <- Y1 - X1 %*% beta
-    b_tau1 <- b + 0.5 * sum(resid1^2)
-    tau1 <- rgamma(1, shape = a_tau1, rate = b_tau1)
+    # --- Sample tau2 (truncated: tau2 < tau1) ---
+    residuals2 <- Y2 - X2 %*% t(beta)
+    shape_tau2 <- a + n2 / 2
+    rate_tau2 <- b + sum(residuals2^2) / 2
     
-    # 3. Sample tau2 from its truncated conditional posterior
-    a_tau2 <- a + (n - n1)/2
-    resid2 <- Y2 - X2 %*% beta
-    b_tau2 <- b + 0.5 * sum(resid2^2)
-    
-    # Sample from truncated Gamma using inverse CDF method
-    u <- runif(1, 0, pgamma(tau1, shape = a_tau2, rate = b_tau2))
-    tau2 <- qgamma(u, shape = a_tau2, rate = b_tau2)
+    # Inverse CDF method for truncated Gamma
+    u <- runif(1, 0, pgamma(tau1, shape_tau2, rate_tau2))
+    tau2 <- qgamma(u, shape_tau2, rate_tau2)
     
     # Store samples
-    beta_samples[iter,] <- beta
-    tau1_samples[iter] <- tau1
-    tau2_samples[iter] <- tau2
+        # Store samples after burn-in and with thinning
+    if (iter > burn_in && (iter - burn_in) %% thin == 0) {
+      sample_count <- sample_count + 1
+      beta_samples[sample_count, ] <- beta
+      tau1_samples[sample_count] <- tau1
+      tau2_samples[sample_count] <- tau2
+    }
+  }
+  
+  # Return results as a list
+  list(
+    beta_samples = beta_samples,
+    tau1_samples = tau1_samples,
+    tau2_samples = tau2_samples
+    )
 }
+```
 
-# Post-processing (remove burn-in and thin)
-keep <- seq(burnin+1, n_iter, by=thin)
-beta_samples <- beta_samples[keep,]
-tau1_samples <- tau1_samples[keep]
-tau2_samples <- tau2_samples[keep]
+```{r}
+# Example usage:
+set.seed(123)
+n <- 100
+p <- 5
+X <- cbind(1, matrix(rnorm(n*(p-1)), n, p-1))
+true_beta <- c(1, 2, -1, 3, 5 )
+Y <- X %*% true_beta + rnorm(n)
 
-# Summary statistics
-cat("Posterior means:\n")
-cat("beta:", colMeans(beta_samples), "\n")
-cat("tau1:", mean(tau1_samples), "(sigma1:", mean(1/sqrt(tau1_samples)), ")\n")
-cat("tau2:", mean(tau2_samples), "(sigma2:", mean(1/sqrt(tau2_samples)), ")\n")
+# Prior parameters
+T0 <- diag(1, p)  # Prior precision for beta
+a <- 0.1; b <- 0.1  # Gamma prior parameters
 
-# Trace plots
-par(mfrow=c(2,2))
-plot(beta_samples[,1], type="l", main="Intercept trace")
-plot(beta_samples[,2], type="l", main="beta1 trace")
-plot(tau1_samples, type="l", main="tau1 trace")
-plot(tau2_samples, type="l", main="tau2 trace")
+# Run Gibbs sampler
+results <- bayes_lm_gibbs_trunc(X=X, Y=Y, n1 = n*0.8, n2 = n*0.2, prior_beta_variance = 2, a=a, b=b)
+results
 
-# Densities
-par(mfrow=c(2,2))
-plot(density(beta_samples[,1]), main="Intercept posterior")
-abline(v=true_beta[1], col="red")
-plot(density(beta_samples[,2]), main="beta1 posterior")
-abline(v=true_beta[2], col="red")
-plot(density(1/sqrt(tau1_samples)), main="sigma1 posterior")
-abline(v=1/sqrt(true_tau1), col="red")
-plot(density(1/sqrt(tau2_samples)), main="sigma2 posterior")
-abline(v=1/sqrt(true_tau2), col="red")
+# Check results
+colMeans(results$beta_samples)  # Posterior means of beta
+mean(results$tau1_samples)     # Posterior mean of tau1
+mean(results$tau2_samples)     # Posterior mean of tau2
 ```
