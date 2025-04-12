@@ -130,9 +130,7 @@ for(i in 1:ncol(results[[1]])){
     geom_vline(xintercept = mean(df$x), color = "red") +
     geom_vline(xintercept = beta.true[i], color = "green") +
     geom_vline(xintercept = cred_int[1], color = "orange", linetype = "dashed") +
-    geom_vline(xintercept = cred_int[2], color = "orange", linetype = "dashed") +
-    geom_text(aes(x = 0, y = 0.5, label = paste0("Mean=", round(mean(df$x), 1))), color = "red", size = 2) +
-    geom_text(aes(x = 0, y = 0.3, label = paste0("True Beta=", round(beta.true[i], 1))),color = "green", size = 2) +
+    geom_vline(xintercept = cred_int[2], color = "orange", linetype = "dashed") 
     labs(
       title = paste0("Density Plot For ", names[i]), 
       x = "Beta Coefficient Values", 
@@ -150,6 +148,7 @@ combined <- do.call(grid.arrange, c(trace_plots, ncol = 2))
 ```
 
 ```{r}
+# Trying to add annotations to the graphs
 for(i in 1:ncol(results[[1]])){
   df <- data.frame(x = results[[1]][,i])
   cred_int <- quantile(df$x, probs = c(0.025, 0.975))
