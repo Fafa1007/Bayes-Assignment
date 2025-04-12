@@ -1,1 +1,231 @@
+# Question 2
 
+## Required Functions
+
+```{r}
+library(ggplot2)
+library(MASS)
+
+#### Data Generating Functions ####
+generate_lost <- function(grid_size, nsims){
+  # Function to generate the prior distribution for the 
+  # location of the lost fisherman
+  # Args: 
+  #       grid_size: the dimensions of the square search grid
+  #       nsims: number of samples to base the prior distribution on
+  mu_vec  <- c(grid_size/2, grid_size/2)
+  sig_mat <- matrix(c(2, 1, 5, 5), 2,2)
+  
+  dat <- mvrnorm(nsims, mu_vec, sig_mat)
+  dat <- round(abs(dat))
+  
+  prior <- matrix(rep(0,grid_size^2), grid_size, grid_size)
+  for (i in 1:NROW(dat)){
+    if (dat[i,1] < grid_size & dat[i,2] < grid_size){
+      prior[dat[i,1], dat[i,2]] <- prior[dat[i,1], dat[i,2]] + 1
+    }
+  }
+  prior <- prior/sum(prior)
+  return(prior)
+}
+
+generate_fisherman <- function(grid_size){
+  # Function to generate the true location of the lost fisherman.
+  # This should not effect the search decision in any way!! It is unkown
+  # to the search crew.
+  # Args: 
+  #       grid_size: the dimensions of the square search grid
+
+  mu_vec  <- c(grid_size/2, grid_size/2)
+  sig_mat <- matrix(c(2, 1, 5, 5), 2,2)
+  
+  location  <- round(mvrnorm(1, mu_vec, sig_mat))
+  true_grid <- matrix(rep(0, grid_size^2), grid_size, grid_size)
+  true_grid[location[1], location[2]] <- 1
+  
+  return(true_grid)
+}
+```
+
+## Simulation Setup of Prior Values
+
+```{r}
+search_size <- 20
+set.seed(2025)
+
+#### Prior Probability of Detection Pi ####
+unifs <- runif(search_size^2, min = 0.6, max = 0.9)
+detect_pr <- matrix(unifs, ncol = search_size)
+p <- as.vector(detect_pr)
+
+#### Prior Probability of Occurrence theta_i  ###
+theta_grid <- generate_lost(search_size, nsims = 1000)
+theta <- as.vector(theta_grid)
+
+#### "Unknown" True Location Of The Fisherman ####
+true_grid <- generate_fisherman(search_size)
+true_cell <- which(as.vector(true_grid) == 1)
+```
+
+## Heat map Function For Plotting
+
+```{r}
+library(ggplot2)
+plot_heatmap <- function(detection_chance, true_cell, grid_size, title = "Heatmap of Detection Probabilities") {
+  prob_matrix <- matrix(detection_chance, nrow = grid_size, ncol = grid_size, byrow = TRUE)
+  
+  # Convert true_cell index to row and column (assuming row-major order)
+  true_row <- ((true_cell - 1) %/% grid_size) + 1
+  true_col <- ((true_cell - 1) %% grid_size) + 1
+  
+  # Create melted data frame
+  melted_data <- reshape2::melt(prob_matrix)
+  
+  ggplot(melted_data, aes(Var2, Var1, fill = value)) +
+    geom_tile() +
+    # Add green border for the true cell with color aesthetic mapped
+    geom_tile(data = data.frame(Var1 = true_row, Var2 = true_col),
+              aes(x = Var2, y = Var1, color = "True Cell"),
+              fill = NA, size = 0.8, width = 0.9, height = 0.9) +
+    scale_fill_gradient(low = "yellow", high = "red", name = "Probability") +
+    scale_color_manual(name = "", values = c("True Cell" = "green")) +
+    labs(x = "Grid Column", y = "Grid Row", title = title) +
+    scale_y_reverse() +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(size = 16, face = "bold"),
+      axis.title.x = element_text(size = 14),
+      axis.title.y = element_text(size = 14), 
+      axis.text.x = element_text(size = 10),
+      axis.text.y = element_text(size = 10),
+      legend.position = "right"
+    ) +
+    # Add Legends 
+    guides(
+      fill = guide_colorbar(order = 1, title.position = "top"),
+      color = guide_legend(order = 2, 
+                         override.aes = list(fill = NA, size = 2),
+                         title = NULL)
+    )
+}
+```
+
+## Function to Update Probabilities
+
+```{r}
+update_probabilities <- function(theta, p, searched_cell) {
+  # For the searched cell: update using Equation 3
+  theta_new <- theta
+  theta_new[searched_cell] <- ((1 - p[searched_cell]) * theta[searched_cell]) /
+    (1 - p[searched_cell] * theta[searched_cell])
+  
+  # For all other cells: update using Equation 4
+  theta_new[-searched_cell] <- theta[-searched_cell] / (1 - p[searched_cell] * theta[searched_cell])
+  
+  # Normalize to ensure probabilities sum to 1 (numerical stability)
+  #theta_new <- theta_new / sum(theta_new)
+  return(theta_new)
+}
+```
+
+## Bayesian Search
+
+```{r}
+# Set up
+n_hours <- 48  # maximum number of search steps (1 search per hour)
+iter_storage <- data.frame(Hour = integer(),
+                           theta_i = numeric(),
+                           p_i = numeric(),
+                           detection_chance = numeric(),
+                           searching_cell = integer(),
+                           true_cell_prob = numeric())
+
+# For saving snapshots of the heatmap every 12 hours
+# For saving snapshots of the heatmap
+detection_chance_first <- NULL
+detection_chance_last <- NULL
+
+# Search process simulation loop
+for (hour in 1:n_hours) {
+  # Calculate the chance of successful detection in each cell:
+  # product of occurrence probability and detection probability.
+  detection_chance <- theta * p
+  
+  # Select the cell with the highest chance of detection
+  search_cell <- which.max(detection_chance)
+  
+  # Simulate the search in the chosen cell with a Bernoulli trial:
+  detected <- rbinom(1, 1, p[search_cell])
+  
+  # Store iteration data
+  iter_storage <- rbind(iter_storage,
+                        data.frame(Hour = hour,
+                                   theta_i = theta[search_cell],
+                                   p_i = p[search_cell],
+                                   detection_chance = detection_chance[search_cell],
+                                   searching_cell = search_cell,
+                                   true_cell_prob = theta[true_cell]))
+  
+  # Save heatmap snapshot at the first search
+  if (hour == 1) {
+    detection_chance_first <- detection_chance
+  }
+  
+  # If the searched cell is the true cell and the fisherman is detected, stop the search.
+  if (search_cell == true_cell && detected == 1) {
+    print(cat("Fisherman found in cell", search_cell, "at hour", hour, "\n"))
+    break
+  }
+  
+  # Update probabilities based on the search outcome (no detection)
+  theta <- update_probabilities(theta, p, search_cell)
+}
+
+# Save the final heatmap snapshot
+detection_chance_last <- detection_chance
+# Print out iterations
+library(knitr)
+kable(round(iter_storage,4), caption = paste0("The True Cell that the Fisherman is in is ", true_cell))
+
+```
+
+## Bayesian Search Visualisation
+
+```{r}
+# Plot heatmaps: at the first search step and at the final search step
+# (if running interactively, use print() to display ggplot objects)
+library(reshape2)  # for melting matrices for ggplot
+
+p1 <- plot_heatmap(detection_chance_first,true_cell, search_size, title = "Heatmap of Detection Chance Probabilities\n(i.e. product of occurrence and detection probabilities)\nfor the grid at First Baysian Search Step")
+p2 <- plot_heatmap(detection_chance_last,true_cell, search_size, title = "Heatmap of Detection Chance Probabilities\n(i.e. product of occurrence and detection probabilities)\nfor the grid at Final Baysian Search Step")
+
+print(p1)
+print(p2)
+
+ #ggsave(plot = p1, filename = "Figures/Question 2 Heatmap at First Search Step.png")
+ #ggsave(plot = p2, filename = "Figures/Question 2 Heatmap at Final Search Step.png")
+
+# Plot the evolution of the posterior probability for the true cell over time
+df_true <- data.frame(Hour = 1:length(iter_storage[,6]), 
+                      True_Cell_Probability = iter_storage[,6])
+true_prob_plot <- ggplot(df_true, aes(x = Hour, y = True_Cell_Probability)) +
+  geom_line(color = "blue", size=2) +
+  geom_point(color = "red", size = 3) +
+  labs(title = "Posterior Probability of Occurance for the True Cell Over Time",
+       x = "Search Step (Hour)", y = "Probability") +
+  theme_minimal() +
+  scale_x_continuous(breaks = 1:nrow(iter_storage))+
+  scale_y_continuous(n.breaks = 6) +
+  theme_minimal()+
+  theme(
+    plot.title = element_text(size = 16, face = "bold"),
+    axis.title.x = element_text(size = 14),
+    axis.title.y = element_text(size = 14), 
+    axis.text.x = element_text(size = 10),
+    axis.text.y = element_text(size = 10)
+  )
+true_prob_plot
+
+# ggsave(plot = true_prob_plot, filename="Figures/Question 2 True Cell Posterior Probability Plot Over Time.png")
+
+```
